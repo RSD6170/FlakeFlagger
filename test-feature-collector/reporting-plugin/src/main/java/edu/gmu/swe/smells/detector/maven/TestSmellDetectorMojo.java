@@ -9,26 +9,27 @@ import edu.gmu.swe.smells.detector.internal.DetectedSmellInstance;
 import edu.gmu.swe.smells.detector.internal.DetectorEntryPoint;
 import edu.gmu.swe.smells.detector.internal.TestContext;
 import org.apache.maven.artifact.Artifact;
-import org.apache.maven.artifact.factory.ArtifactFactory;
-import org.apache.maven.artifact.metadata.ArtifactMetadataSource;
-import org.apache.maven.artifact.repository.ArtifactRepository;
-import org.apache.maven.artifact.resolver.*;
-import org.apache.maven.artifact.resolver.filter.ArtifactFilter;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugin.logging.Log;
-import org.apache.maven.plugins.annotations.Component;
-import org.apache.maven.plugins.annotations.LifecyclePhase;
-import org.apache.maven.plugins.annotations.Mojo;
-import org.apache.maven.plugins.annotations.Parameter;
+import org.apache.maven.plugins.annotations.*;
 import org.apache.maven.plugins.surefire.report.ReportTestSuite;
 import org.apache.maven.project.MavenProject;
-import org.apache.maven.shared.artifact.filter.ScopeArtifactFilter;
-import org.apache.maven.shared.dependency.tree.DependencyNode;
-import org.apache.maven.shared.dependency.tree.DependencyTreeBuilder;
-import org.apache.maven.shared.dependency.tree.DependencyTreeBuilderException;
-import org.apache.maven.shared.dependency.tree.traversal.CollectingDependencyNodeVisitor;
+import org.apache.maven.shared.dependency.graph.DependencyGraphBuilder;
+import org.apache.maven.shared.dependency.graph.DependencyGraphBuilderException;
+import org.eclipse.aether.RepositorySystem;
+import org.eclipse.aether.RepositorySystemSession;
+import org.eclipse.aether.artifact.DefaultArtifact;
+import org.eclipse.aether.collection.CollectRequest;
+import org.eclipse.aether.graph.Dependency;
+import org.eclipse.aether.impl.ArtifactResolver;
+import org.eclipse.aether.repository.RemoteRepository;
+import org.eclipse.aether.resolution.ArtifactResult;
+import org.eclipse.aether.resolution.DependencyRequest;
+import org.eclipse.aether.resolution.DependencyResolutionException;
+import org.eclipse.aether.resolution.DependencyResult;
+import org.eclipse.aether.util.filter.ScopeDependencyFilter;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.jacoco.core.tools.ExecFileLoader;
@@ -36,9 +37,12 @@ import org.jacoco.core.tools.ExecFileLoader;
 import java.io.*;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.*;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
 
-@Mojo(name = "detectSmells", defaultPhase = LifecyclePhase.VERIFY)
+@Mojo(name = "detectSmells", defaultPhase = LifecyclePhase.VERIFY, requiresDependencyCollection = ResolutionScope.TEST, requiresDependencyResolution = ResolutionScope.TEST)
 public class TestSmellDetectorMojo extends AbstractMojo {
 	Log consoleLogger;
 	PrintWriter fw;
@@ -65,22 +69,27 @@ public class TestSmellDetectorMojo extends AbstractMojo {
 	protected boolean isLastExec;
 	protected ExecFileLoader loader;
 	protected boolean doDeflaker = false;
-	@Parameter(defaultValue = "${project.remoteArtifactRepositories}", readonly = true, required = true)
-	protected List<ArtifactRepository> remoteRepositories;
-	@Parameter(defaultValue = "${localRepository}", readonly = true, required = true)
-	protected ArtifactRepository localRepository;
+	/**
+	 * The current repository/network configuration of Maven.
+	 */
+	@Parameter(defaultValue = "${repositorySystemSession}", readonly = true)
+	private RepositorySystemSession repoSession;
+
+	/**
+	 * The project's remote repositories to use for the resolution.
+	 */
+	@Parameter(defaultValue = "${project.remoteProjectRepositories}", readonly = true)
+	private List<RemoteRepository> remoteRepos;
+
 	@Parameter(defaultValue = "${reactorProjects}", readonly = true, required = true)
 	protected List<MavenProject> reactorProjects;
 	@Component
 	protected ArtifactResolver resolver;
 	@Component
-	protected ArtifactFactory artifactFactory;
+	protected DependencyGraphBuilder treeBuilder;
+
 	@Component
-	protected ArtifactMetadataSource artifactMetadataSource;
-	@Component
-	protected ArtifactCollector artifactCollector;
-	@Component
-	protected DependencyTreeBuilder treeBuilder;
+	private RepositorySystem repoSystem;
 	@Parameter(defaultValue = "false", property="smells.skip")
 	protected boolean skipSmellDetection;
 
@@ -88,7 +97,7 @@ public class TestSmellDetectorMojo extends AbstractMojo {
 		return o1.getGroupId().equals(o2.getGroupId()) && o1.getArtifactId().equals(o2.getArtifactId()) && o1.getVersion().equals(o2.getVersion()) && o1.getType().equals(o2.getType());
 	}
 
-	private void collectDependencies(MavenProject project) throws DependencyTreeBuilderException {
+	private void collectDependencies(MavenProject project) throws DependencyGraphBuilderException {
 		if (visited.contains(project))
 			return;
 		visited.add(project);
@@ -100,18 +109,7 @@ public class TestSmellDetectorMojo extends AbstractMojo {
 			dependenciesWithSourceDirs.add(project.getBuild().getTestOutputDirectory());
 		}
 
-		ArtifactFilter artifactFilter = new ScopeArtifactFilter(null);
-
-		DependencyNode rootNode = treeBuilder.buildDependencyTree(project, localRepository, artifactFactory, artifactMetadataSource, artifactFilter, artifactCollector);
-
-		CollectingDependencyNodeVisitor visitor = new CollectingDependencyNodeVisitor();
-
-		rootNode.accept(visitor);
-
-		List<DependencyNode> nodes = visitor.getNodes();
-		for (DependencyNode dependencyNode : nodes) {
-			int state = dependencyNode.getState();
-			Artifact artifact = dependencyNode.getArtifact();
+		for (Artifact artifact : project.getArtifacts()) {
 			// Check to make sure that the artifact isn't part of the
 			// reactor projects.
 			boolean found = false;
@@ -128,22 +126,26 @@ public class TestSmellDetectorMojo extends AbstractMojo {
 				// System.out.println("Resolving " + artifact);
 				// resolver.resolve(artifact, remoteRepositories,
 				// localRepository);
-				ArtifactResolutionResult res = resolver.resolveTransitively(Collections.singleton(artifact), project.getArtifact(), remoteRepositories, localRepository, artifactMetadataSource);
-				for (Object r : res.getArtifacts()) {
-					File f = ((Artifact) r).getFile();
+				CollectRequest collectRequest = new CollectRequest(new Dependency( new DefaultArtifact(
+						artifact.getGroupId(),
+						artifact.getArtifactId(),
+						artifact.getClassifier(),
+						artifact.getType(),
+						artifact.getVersion()
+				), ""),remoteRepos);
+				DependencyResult result = repoSystem.resolveDependencies(repoSession, new DependencyRequest(collectRequest, new ScopeDependencyFilter("")));
+				for (ArtifactResult r : result.getArtifactResults()) {
+					File f =  r.getArtifact().getFile();
 					if(f.exists()) {
 						dependenciesWithSourceDirs.add(f.getAbsolutePath());
 						dependenciesWithoutSourceDirs.add(f.getAbsolutePath());
 					}
 				}
-			} catch (ArtifactResolutionException e) {
-//				if (debug)
-				e.printStackTrace();
-			} catch (ArtifactNotFoundException e) {
+			} catch (DependencyResolutionException e) {
 //				if (debug)
 				e.printStackTrace();
 			}
-		}
+        }
 	}
 
 	protected void logInfo(String str) {
@@ -428,7 +430,7 @@ public class TestSmellDetectorMojo extends AbstractMojo {
 					dependenciesWithSourceDirs.remove(project.getBuild().getOutputDirectory());
 					dependenciesWithSourceDirs.remove(project.getBuild().getTestOutputDirectory());
 
-				} catch (DependencyTreeBuilderException e) {
+				} catch (DependencyGraphBuilderException e) {
 					e.printStackTrace();
 					throw new MojoExecutionException("", e);
 				}

@@ -4,6 +4,7 @@ import edu.gmu.swe.smells.Utils;
 import edu.gmu.swe.smells.coverage.JacocoCoverageSource;
 import edu.gmu.swe.smells.detector.internal.DetectorEntryPoint;
 import edu.gmu.swe.smells.detector.internal.TestContext;
+import org.apache.maven.plugin.surefire.log.api.NullConsoleLogger;
 import org.apache.maven.plugins.surefire.report.ReportTestCase;
 import org.apache.maven.plugins.surefire.report.ReportTestSuite;
 import org.apache.maven.plugins.surefire.report.SurefireReportParser;
@@ -45,16 +46,12 @@ public class ExecutionTimeReporter extends DemographicReporter{
         List<File> reportDirs = new ArrayList<>();
         reportDirs.addAll(surefireReportDirs);
 
-	    SurefireReportParser parser = new SurefireReportParser(reportDirs,Locale.US);
+	    SurefireReportParser parser = new SurefireReportParser(reportDirs, new NullConsoleLogger());
 
-	    try {
-		    for(ReportTestSuite suite : parser.parseXMLReportFiles()){
-		    	for(ReportTestCase c : suite.getTestCases()){
-				    output.println(rootProjectName+","+c.getFullClassName()+","+ Utils.escapeStrForOutput(c.getName())+","+c.getTime());
-			    }
-		    }
-	    } catch (MavenReportException e) {
-		    e.printStackTrace();
-	    }
+        for(ReportTestSuite suite : parser.parseXMLReportFiles()){
+            for(ReportTestCase c : suite.getTestCases()){
+                output.println(rootProjectName+","+c.getFullClassName()+","+ Utils.escapeStrForOutput(c.getName())+","+c.getTime());
+            }
+        }
     }
 }

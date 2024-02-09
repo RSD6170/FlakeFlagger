@@ -18,7 +18,7 @@ package edu.gmu.swe.kp.report.jacoco;
  * Representation of a byte code instruction for analysis. Internally used for
  * analysis.
  */
-public class Instruction extends org.jacoco.core.internal.flow.Instruction {
+public class Instruction extends org.jacoco.core.internal.analysis.Instruction {
 	public Instruction(int line) {
 		super(line);
 	}
@@ -27,7 +27,7 @@ public class Instruction extends org.jacoco.core.internal.flow.Instruction {
 	public Instruction _predecessor;
 
 	public void setPredecessor(final Instruction predecessor) {
-		super.setPredecessor(predecessor);
+		predecessor.addBranch(this, 0);
 		this._predecessor = predecessor;
 
 	}

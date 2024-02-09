@@ -18,6 +18,7 @@ public class TestNGExecutionListener implements ITestListener {
 	LinkedList<TestResult> methods = new LinkedList<TestResult>();
 	TestResult thisMethod;
 
+
 	static {
 		if (System.getProperty("diffcov.mysql") != null && System.getProperty("diffcov.mysqllight") == null) {
 			delegate = MySQLLogger.instance();

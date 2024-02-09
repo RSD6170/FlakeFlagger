@@ -18,7 +18,6 @@ package edu.gmu.swe.kp.report.jacoco;
 import org.jacoco.core.analysis.ICoverageVisitor;
 import org.jacoco.core.data.ExecutionDataStore;
 import org.jacoco.core.internal.ContentTypeDetector;
-import org.jacoco.core.internal.Java9Support;
 import org.jacoco.core.internal.Pack200Streams;
 import org.jacoco.core.internal.analysis.StringPool;
 import org.jacoco.core.internal.data.CRC64;
@@ -97,7 +96,7 @@ public class Analyzer {
 	public void analyzeClass(final ClassReader reader) {
 		try {
 			final ClassVisitor visitor = createAnalyzingVisitor(
-					CRC64.checksum(reader.b), reader.getClassName());
+					CRC64.classId(reader.b), reader.getClassName());
 			reader.accept(visitor, 0);
 		} catch (Throwable t) {
 			t.printStackTrace();
@@ -115,7 +114,7 @@ public class Analyzer {
 			throws IOException {
 		try {
 			analyzeClass(
-					new ClassReader(Java9Support.downgradeIfRequired(buffer)));
+					new ClassReader(buffer));
 		} catch (final Throwable cause) {
 			System.err.println("Error while analyzing " + location);
 			cause.printStackTrace();
@@ -134,7 +133,7 @@ public class Analyzer {
 			throws IOException {
 		final byte[] buffer;
 		try {
-			buffer = Java9Support.readFully(input);
+			buffer = input.readAllBytes();
 		} catch (final IOException e) {
 			throw analyzerError(location, e);
 		}

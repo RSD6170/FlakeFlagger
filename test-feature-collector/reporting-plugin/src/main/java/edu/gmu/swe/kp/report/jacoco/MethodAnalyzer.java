@@ -287,7 +287,7 @@ public class MethodAnalyzer extends MethodProbesVisitor {
 	public void visitEnd() {
 		// Wire jumps:
 		for (final Jump j : jumps) {
-			LabelInfo.getInstruction(j.target).setPredecessor(j.source);
+			j.source.addBranch(LabelInfo.getInstruction(j.target), 0);
 		}
 
 		// Propagate probe values:
@@ -350,17 +350,13 @@ public class MethodAnalyzer extends MethodProbesVisitor {
 
 	private void addProbe(final int probeId) {
 //		System.out.println(data);
-		lastInsn.addBranch();
+		lastInsn.addBranch(false, 0);
 		if (data == null)
 			return;
 		for (Entry<String, boolean[]> entry : data.entrySet()) {
 			if (entry.getValue() != null && entry.getValue().length > probeId && entry.getValue()[probeId]) {
-				List<Instruction> insns = coveredProbes.get(entry.getKey());
-				if (insns == null) {
-					insns = new ArrayList<Instruction>();
-					coveredProbes.put(entry.getKey(), insns);
-				}
-				insns.add(lastInsn);
+                List<Instruction> insns = coveredProbes.computeIfAbsent(entry.getKey(), k -> new ArrayList<Instruction>());
+                insns.add(lastInsn);
 			}
 		}
 	}

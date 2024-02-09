@@ -1,5 +1,6 @@
 package edu.gmu.swe.kp.listener;
 
+import com.google.auth.oauth2.GoogleCredentials;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.FirebaseOptions;
 import com.google.firebase.database.DatabaseError;
@@ -9,6 +10,7 @@ import com.google.firebase.database.FirebaseDatabase;
 import edu.gmu.swe.kp.listener.MySQLLogger.TestResult;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -24,12 +26,17 @@ public class FirebaseLogger {
 	static AtomicInteger pendingFirebaseRequests = new AtomicInteger();
 	public FirebaseLogger() {
 		InputStream serviceAccount = new ByteArrayInputStream(System.getenv("FIREBASE_KEY").getBytes());
-		FirebaseOptions options = new FirebaseOptions.Builder()
-				  .setDatabaseUrl(System.getenv("FIREBASE_HOST"))
-				  .setServiceAccount(serviceAccount)
-				  .build();
+        FirebaseOptions options = null;
+        try {
+            options = FirebaseOptions.builder()
+                      .setDatabaseUrl(System.getenv("FIREBASE_HOST"))
+                      .setCredentials(GoogleCredentials.fromStream(serviceAccount))
+                      .build();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
 
-		FirebaseApp.initializeApp(options);
+        FirebaseApp.initializeApp(options);
 		database = FirebaseDatabase.getInstance();
 		
 		String repo_name=System.getenv("TRAVIS_REPO_SLUG");

@@ -4,7 +4,7 @@ import edu.gmu.swe.smells.detector.internal.AbstractTestSmellDetector;
 import edu.gmu.swe.smells.detector.internal.JDTContext;
 import edu.gmu.swe.smells.detector.internal.TestContext;
 
-import org.apache.xml.serialize.Method;
+
 import org.eclipse.jdt.core.dom.*;
 
 import java.util.Collection;

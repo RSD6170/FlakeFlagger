@@ -10,15 +10,17 @@ import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.project.MavenProject;
-import org.codehaus.plexus.component.annotations.Component;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.eclipse.aether.repository.RemoteRepository;
 
+import javax.inject.Named;
+import javax.inject.Singleton;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedList;
 
-@Component(role = AbstractMavenLifecycleParticipant.class, hint = "kp-ext")
+@Named("kp-ext")
+@Singleton
 public class KPLifecycleParticipant extends AbstractMavenLifecycleParticipant {
 	public static final String KP_VERSION = "1.0-SNAPSHOT";
 
@@ -43,6 +45,8 @@ public class KPLifecycleParticipant extends AbstractMavenLifecycleParticipant {
 		disabledPlugins.add("jacoco-maven-plugin");
 		disabledPlugins.add("maven-dependency-versions-check-plugin");
 		disabledPlugins.add("duplicate-finder-maven-plugin");
+		disabledPlugins.add("maven-javadoc-plugin");
+
 	}
 
 	LinkedList<Configurator> configurators = new LinkedList<>();
@@ -53,6 +57,8 @@ public class KPLifecycleParticipant extends AbstractMavenLifecycleParticipant {
 		for (Plugin p : proj.getBuildPlugins()) {
 			if (disabledPlugins.contains(p.getArtifactId())) {
 				System.out.println("Warning: KebabPizza disabling incompatible " + p.getGroupId() + ":" + p.getArtifactId() + " from " + proj.getArtifactId());
+			} else if (p.getGroupId().equals("asm")) {
+				System.out.println("Warning: KebabPizza disabling old ASM  " + p.getGroupId() + ":" + p.getArtifactId() + " from " + proj.getArtifactId());
 			}
 			else{
 				newPlugs.add(p);
@@ -91,6 +97,13 @@ public class KPLifecycleParticipant extends AbstractMavenLifecycleParticipant {
 			proj.getRemotePluginRepositories().removeAll(reposToRemove);
 	}
 
+	public void rewriteJacocoConfiguration(Plugin p){
+		String version = p.getVersion();
+		if (version != null) {
+			p.setVersion("0.8.11");
+		}
+	}
+
 	public void rewriteSurefireConfiguration(MavenProject project, Plugin p) throws MojoFailureException {
 		boolean testNG = false;
 		for (Dependency d : project.getDependencies()) {
@@ -100,14 +113,10 @@ public class KPLifecycleParticipant extends AbstractMavenLifecycleParticipant {
 		String version = p.getVersion();
 		if (version != null) {
 			try {
-				version = version.substring(2);
-				if (!"19.1".equals(version) && !version.startsWith("20")) {
-					int vers = Integer.valueOf(version);
-					if (vers <= 17)
-						p.setVersion("2.19.1");
-				}
+				if (!version.startsWith("3"))
+					p.setVersion("3.2.5");
 			} catch (NumberFormatException ex) {
-				p.setVersion("2.19.1");
+				p.setVersion("3.2.5");
 			}
 		}
 		Dependency d = new Dependency();
@@ -130,7 +139,6 @@ public class KPLifecycleParticipant extends AbstractMavenLifecycleParticipant {
 
 		p.getDependencies().clear();
 		for (PluginExecution pe : p.getExecutions()) {
-
 			Xpp3Dom config = (Xpp3Dom) pe.getConfiguration();
 			if (config == null)
 				config = new Xpp3Dom("configuration");
@@ -305,8 +313,8 @@ public class KPLifecycleParticipant extends AbstractMavenLifecycleParticipant {
 			try {
 				LinkedList<Plugin> toModify = new LinkedList<>(p.getBuildPlugins());
 				for (Plugin o : toModify) {
-					if ((o.getArtifactId().equals("maven-surefire-plugin") && o.getGroupId().equals("org.apache.maven.plugins")) || (o.getArtifactId().equals("maven-failsafe-plugin") && o.getGroupId().equals("org.apache.maven.plugins")))
-						rewriteSurefireConfiguration(p, o);
+					if ((o.getArtifactId().equals("maven-surefire-plugin") && o.getGroupId().equals("org.apache.maven.plugins")) || (o.getArtifactId().equals("maven-failsafe-plugin") && o.getGroupId().equals("org.apache.maven.plugins")))  rewriteSurefireConfiguration(p, o);
+					if ((o.getArtifactId().equals("coco-maven-plugin") && o.getGroupId().equals("org.jacoco")) ) rewriteJacocoConfiguration(o);
 				}
 			} catch (MojoFailureException e) {
 				e.printStackTrace();
@@ -317,16 +325,18 @@ public class KPLifecycleParticipant extends AbstractMavenLifecycleParticipant {
 
 	private void addDependencyPlugin(MavenProject p) {
 		Plugin depPlugin = null;
+		Plugin compPlugin = null;
 		for(Plugin o : p.getBuildPlugins()){
 			if(o.getArtifactId().equals("maven-dependency-plugin") && o.getGroupId().equals("org.apache.maven.plugins")){
 				depPlugin = o;
 			}
+			if (o.getArtifactId().equals("maven-compiler-plugin") && o.getGroupId().equals("org.apache.maven.plugins")) compPlugin = o;
 		}
 		if(depPlugin == null){
 			depPlugin = new Plugin();
 			depPlugin.setArtifactId("maven-dependency-plugin");
 			depPlugin.setGroupId("org.apache.maven.plugins");
-			depPlugin.setVersion("3.1.2");
+			depPlugin.setVersion("3.6.1");
 			p.getBuild().addPlugin(depPlugin);
 		}
 		PluginExecution ex = new PluginExecution();
@@ -340,6 +350,24 @@ public class KPLifecycleParticipant extends AbstractMavenLifecycleParticipant {
 		ex.setGoals(Collections.singletonList("build-classpath"));
 		depPlugin.addExecution(ex);
 
+		if (compPlugin == null){
+			compPlugin = new Plugin();
+			compPlugin.setArtifactId("maven-compiler-plugin");
+			compPlugin.setGroupId("org.apache.maven.plugins");
+			compPlugin.setVersion("3.6.1");
+			p.getBuild().addPlugin(compPlugin);
+		}
+
+		PluginExecution ex2 = new PluginExecution();
+		Xpp3Dom config2 = new Xpp3Dom("configuration");
+		Xpp3Dom outputProperty2 = new Xpp3Dom("source");
+		outputProperty2.setValue("17");
+		Xpp3Dom outputProperty3 = new Xpp3Dom("target");
+		outputProperty3.setValue("17");
+		config2.addChild(outputProperty2);
+		config2.addChild(outputProperty3);
+		ex2.setConfiguration(config2);
+		compPlugin.addExecution(ex2);
 	}
 
 }

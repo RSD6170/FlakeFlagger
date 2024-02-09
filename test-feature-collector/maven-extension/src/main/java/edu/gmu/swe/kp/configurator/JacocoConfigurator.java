@@ -38,7 +38,7 @@ public class JacocoConfigurator extends Configurator {
 
 
 		Plugin newPlug = getOrAddPlugin(project,
-				"org.jacoco", "jacoco-maven-plugin", "0.7.9");
+				"org.jacoco", "jacoco-maven-plugin", "0.8.11");
 
 		{
 			PluginExecution jacocoPrepExec = new PluginExecution();
