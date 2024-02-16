@@ -46,6 +46,9 @@ public class KPLifecycleParticipant extends AbstractMavenLifecycleParticipant {
 		disabledPlugins.add("maven-dependency-versions-check-plugin");
 		disabledPlugins.add("duplicate-finder-maven-plugin");
 		disabledPlugins.add("maven-javadoc-plugin");
+		disabledPlugins.add("spotless-maven-plugin");
+		disabledPlugins.add("maven-gpg-plugin");
+
 
 	}
 
@@ -314,7 +317,7 @@ public class KPLifecycleParticipant extends AbstractMavenLifecycleParticipant {
 				LinkedList<Plugin> toModify = new LinkedList<>(p.getBuildPlugins());
 				for (Plugin o : toModify) {
 					if ((o.getArtifactId().equals("maven-surefire-plugin") && o.getGroupId().equals("org.apache.maven.plugins")) || (o.getArtifactId().equals("maven-failsafe-plugin") && o.getGroupId().equals("org.apache.maven.plugins")))  rewriteSurefireConfiguration(p, o);
-					if ((o.getArtifactId().equals("coco-maven-plugin") && o.getGroupId().equals("org.jacoco")) ) rewriteJacocoConfiguration(o);
+					if ((o.getArtifactId().equals("jacoco-maven-plugin") && o.getGroupId().equals("org.jacoco")) ) rewriteJacocoConfiguration(o);
 				}
 			} catch (MojoFailureException e) {
 				e.printStackTrace();
@@ -331,6 +334,7 @@ public class KPLifecycleParticipant extends AbstractMavenLifecycleParticipant {
 				depPlugin = o;
 			}
 			if (o.getArtifactId().equals("maven-compiler-plugin") && o.getGroupId().equals("org.apache.maven.plugins")) compPlugin = o;
+			if (o.getArtifactId().equals("bnd-maven-plugin") && o.getGroupId().equals("biz.aQute.bnd")) o.setVersion("7.0.0");
 		}
 		if(depPlugin == null){
 			depPlugin = new Plugin();
