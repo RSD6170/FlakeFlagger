@@ -18,9 +18,18 @@ import time
 
 #%%
 def concatenate_csv_files(files,csvFileName,ouptut):
-
-    merge_csv = pd.concat((pd.read_csv(m) for m in files), axis=0, ignore_index=True)    
+    merge_csv = pd.concat((pd.read_csv(m, on_bad_lines="skip") for m in files), axis=0, ignore_index=True)
     merge_csv.to_csv(ouptut+csvFileName+'.csv',  index=False)
+
+
+def add_testpath(file):
+    csv = pd.read_csv(file, on_bad_lines="skip")
+    csv["testfiles_path"] = os.path.join(os.path.dirname(file), "demographic-reports/testMethods")
+    return csv
+
+def concat_with_filename(files, csvFileName, output):
+    merge_csv = pd.concat((add_testpath(m) for m in files), axis=0, ignore_index=True)
+    merge_csv.to_csv(output + csvFileName + '.csv', index=False)
 
 #%%
 def fix_empty_csvFiles(files,new_columns):
@@ -96,7 +105,7 @@ def collect_flakeFlagger_files(clone_project,ouptut):
     fix_empty_csvFiles(ExecutionTime,ExecutionTime_columns_lst)
     fix_empty_csvFiles(LibrariesUsages,LibrariesUsages_columns_lst)
     
-    concatenate_csv_files(smellsPretty,"All-smells",ouptut)
+    concat_with_filename(smellsPretty,"All-smells",ouptut)
     concatenate_csv_files(basicDemographics,"All-basicDemographics",ouptut)
     concatenate_csv_files(churn,"All-churn",ouptut)
     concatenate_csv_files(ExecutionTime,"All-ExecutionTime",ouptut)
@@ -163,8 +172,11 @@ def generate_processed_data_for_flakiness_prediction(result_dir,flaky_test_list)
     processed_data_with_libraries_usages.insert(3, 'test_name', test_name_col)
     
     # add the flakiness status to for each test_name
-    processed_data_with_libraries_usages.insert(4, 'flaky', test_name_col)
-    processed_data_with_libraries_usages['flaky'] = np.where(processed_data_with_libraries_usages['test_name'].isin(flaky_test_list), 1, 0) 
+    processed_data_with_libraries_usages = pd.merge(processed_data_with_libraries_usages, flaky_test_list, on="test_name", how="left")
+    processed_data_with_libraries_usages["flaky"] = processed_data_with_libraries_usages["flaky"].fillna("NOT_FLAKY")
+    processed_data_with_libraries_usages.insert(4, 'flaky', processed_data_with_libraries_usages.pop('flaky'))
+
+
     
     # in case of duplication
     processed_data_with_libraries_usages = processed_data_with_libraries_usages.drop_duplicates(keep='first')
@@ -176,17 +188,23 @@ execution_time = time.time()
 if __name__ == '__main__':
         
     # directory of projects that we collect flakgeflagger features. 
-    clone_project = sys.argv[1]
+    clone_project = "/home/ubuntu/atsfp/results_final"
 
     # output ... in case the folder does not exist
-    ouptut = "result/"
+    ouptut = clone_project + "/_generated_new/"
+
+    # source of flaky tests
+    flaky_source = "/home/ubuntu/atsfp/idoft/pr-data.csv"
+
     Path(ouptut).mkdir(parents=True, exist_ok=True)
     
     # collect all files in one folder ... 
     collect_flakeFlagger_files(clone_project,ouptut)
     
     # start generating the processed_data file. 
-    flaky_test_list = pd.read_csv(sys.argv[2])[sys.argv[3]].unique()
+    flaky_test_list = pd.read_csv(flaky_source, header=0, names=["test_name", "flaky"], usecols=[3,4])
+    flaky_test_list["test_name"] = flaky_test_list["test_name"].str.replace("#", ".")
+    flaky_test_list["flaky"] = flaky_test_list["flaky"].map(lambda x: x if ";" not in x else x.split(";")[0])
     generate_processed_data_for_flakiness_prediction(ouptut,flaky_test_list)
     
     print("The process of generating processed_data.csv is completed in : (%s) seconds. " % round((time.time() - execution_time), 3))

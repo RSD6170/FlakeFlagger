@@ -1,5 +1,7 @@
 
-import io 
+import io
+
+import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize 
 import string
@@ -145,98 +147,82 @@ def JavaKeysAnalysis(data,java_keywords):
     columns = []
     columns.append("Java_keywords")
     for col in columns_keywords:
-        columns.append(col)
+        columns.append(col+"_keyword")
     matrix_result_df.columns = columns
 
     # concatenate two dataframe .. 
-    full_df_format = pd.concat([basic_df, matrix_result_df.reindex(basic_df.index)], axis=1)
+    full_df_format = pd.concat([data, matrix_result_df.reindex(data.index)], axis=1)
+    full_df_format.drop(['Java_keywords'], axis=1)
     return full_df_format
 
-#%%
-
-def fixColumns(merge_data):
-    # column should be in camel case to avoid duplicate columns .. 
-    del merge_data ['Java_keywords']   
-    nonJava_keys_columns = ['test_name', 'flakyStatus', 'tokenList', 'java_keywords', 'javaKeysCounter','testLength']
-
-    for i in merge_data.columns:
-        if i not in nonJava_keys_columns:
-            merge_data.rename(columns = {i:i+'_keyword'}, inplace = True)
-        
-    return merge_data
 
 #%%    
 execution_time = time.time()
 
 
 if __name__ == '__main__':
+    nltk.download('popular')
 
     # just clean DS_store files .. 
     os.system('find . -name ".DS_Store" -delete')
 
-    path = sys.argv[1]
-    project_paths = [f.path for f in os.scandir(path) if f.is_dir()]
-    flaky_status = ['flakyMethods','nonFlakyMethods']
 
     #Get the processed_data to merge with vocabulary_based_approach. 
-    processed_data = pd.read_csv(sys.argv[2])
-    output = sys.argv[3]
+    processed_data = pd.read_csv("/home/ubuntu/atsfp/results_final/_generated_new/your_processed_data.csv")
+    ref_data = processed_data.copy()
+    output = ("/home/ubuntu/atsfp/results_final/_generated_new/processed_data_with_vocabulary_per_test.csv")
      
     # get list of java key words.. 
     java_keywords = ['abstract', 'assert', 'boolean', 'break', 'byte', 'case', 'catch', 'char', 'class', 'continue', 'default', 'do', 'double', 'else', 'enum', 'exports', 'extends', 'final', 'finally', 'float', 'for', 'if', 'implements', 'import', 'instanceof', 'int', 'interface', 'long', 'modules', 'native', 'new', 'package', 'private', 'protected', 'public', 'requires', 'return', 'short', 'static', 'strictfp', 'super', 'switch', 'synchronized', 'this', 'throw', 'throws', 'transient', 'try', 'void', 'volatile', 'while', 'true', "null", 'false', 'const', 'goto']    
-    
-    # convert from java file to txt ... 
-    for project in project_paths:
-        for f in flaky_status:
-            convert_to_txt(project+"/"+f+"/")
+
     
     # convert each test to a list of words ...
     print ("********* Start collecting words from each test .. ")
-    df_columns = ["test_name","flakyStatus","tokenList","java_keywords","javaKeysCounter"]
-    basic_df = pd.DataFrame(columns = df_columns)
-    for project in project_paths:
-        for f in flaky_status:
-            folder = project+'/'+f
-            project_name = os.path.basename(os.path.normpath(project))
-            
-            print ("********* Start processing project --> "+str(project_name) +" -- Type of Tests --> "+str(f))
-            for filename in os.listdir(folder):
-                file_name = os.path.join(folder,filename)
-                test_name = open(file_name)
-                test_words = test_name.read()
-
+    processed_data["tokenList"] = "null"
+    processed_data["java_keywords"] = "null"
+    processed_data["javaKeysCounter"] = np.nan
+    skipcount = 0
+    notfoundcount = 0
+    for index, row in ref_data.iterrows():
+        filename = row.testClassName + "#" + row.testMethodName.replace("\'-", "\',").replace("a: b- c:","a: b, c:") + ".testMethod"
+        filepath = os.path.join(row.testfiles_path, filename)
+        try:
+            with open(filepath, "r") as file:
+                print("********* Start processing test --> " + str(filepath) )
+                test_words = file.read()
                 if (test_words == ""):
-                    print ("-->Skip ("+filename+") in "+project_name+" ("+f+ ") because it is empty")
+                    print("-->Skip (" + filename + ") because it is empty")
+                    skipcount += 1
                 else:
-                    test_content,test_header = get_test_contents_and_header_without_comments(test_words)
-                    words_per_test = remove_stop_words(test_content,test_header)
-                    final_list_nonJavaWords = filterJavaList(words_per_test,java_keywords)
+                    test_content, test_header = get_test_contents_and_header_without_comments(test_words)
+                    words_per_test = remove_stop_words(test_content, test_header)
+                    final_list_nonJavaWords = filterJavaList(words_per_test, java_keywords)
                     final_list_words = detectCamelCaseWords(final_list_nonJavaWords)
 
                     # remove letters only ...
                     final_list_words = [i for i in final_list_words if i not in string.ascii_lowercase]
                     testname_lowerCase = fixTestNames(filename)
-                    
-                    #get javawords with duplication
-                    java_words_per_test = detectJavaKeyword(test_content,test_header,java_keywords)
-                                       
-                    if (f == "flakyMethods"):
-                        basic_df = basic_df.append(pd.Series([testname_lowerCase,1,final_list_words,java_words_per_test,len(java_words_per_test)], index=basic_df.columns ), ignore_index=True)
-                    else:
-                        basic_df = basic_df.append(pd.Series([testname_lowerCase,0,final_list_words,java_words_per_test,len(java_words_per_test)], index=basic_df.columns ), ignore_index=True)
-        
+
+                    # get javawords with duplication
+                    java_words_per_test = detectJavaKeyword(test_content, test_header, java_keywords)
+
+                    processed_data.at[index, 'tokenList'] = final_list_words
+                    processed_data.at[index, 'java_keywords'] = java_words_per_test
+                    processed_data.at[index, 'javaKeysCounter'] = len(java_words_per_test)
+        except OSError as e:
+            print("-->Remove (" + filename + ") because not found")
+            processed_data.drop(index=index, inplace=True)
+            notfoundcount += 1
+    print("Skipped: {}".format(skipcount))
+    print("Removed: {}".format(notfoundcount))
+
     # now we extend the dataframe to include javaKeys matrix .. 
-    result = JavaKeysAnalysis(basic_df,java_keywords)   
- 
-    # # fixing columns names  ..
-    merge_data = fixColumns(result)
-    
-    # merge the processed data
-    merge_result_with_processed_data = pd.merge(merge_data, processed_data, how='inner', on=['test_name'])       
+    result = JavaKeysAnalysis(processed_data,java_keywords)
+
     
     #Some columns are deleted .. 
-    merge_result_with_processed_data = merge_result_with_processed_data.drop(['Unnamed: 0', 'testClassName', 'testMethodName','project','flaky'], axis=1)    
-    merge_result_with_processed_data.to_csv(output+".csv",  index=False)
+    merge_result_with_processed_data = result.drop(['testClassName', 'testMethodName','project', 'testfiles_path'], axis=1)
+    merge_result_with_processed_data.to_csv(output,  index=False)
         
     
 print("The processed of collecting tokens per test in given projects is completed in : (%s) seconds. " % round((time.time() - execution_time), 5))

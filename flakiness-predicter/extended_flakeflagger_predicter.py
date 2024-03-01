@@ -12,8 +12,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics import classification_report, f1_score, precision_score,recall_score, confusion_matrix
-import seaborn as sns
-import matplotlib.pyplot as plt
 from sklearn.model_selection import KFold, StratifiedKFold
 import warnings
 from imblearn.over_sampling import SMOTE

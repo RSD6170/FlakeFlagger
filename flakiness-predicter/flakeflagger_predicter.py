@@ -13,8 +13,6 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics import classification_report, f1_score, precision_score,recall_score, confusion_matrix
 import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
 from sklearn.model_selection import KFold, StratifiedKFold
 import warnings
 from imblearn.over_sampling import SMOTE
@@ -195,7 +193,7 @@ def vexctorizeToken(token):
     
     vocabulary_vectorizer = CountVectorizer()
     bow_train = vocabulary_vectorizer.fit_transform(token)
-    matrix_token = pd.DataFrame(bow_train.toarray(), columns = vocabulary_vectorizer.get_feature_names())
+    matrix_token = pd.DataFrame(bow_train.toarray(), columns = vocabulary_vectorizer.get_feature_names_out())
     
     return matrix_token
 

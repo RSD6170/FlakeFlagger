@@ -1,4 +1,4 @@
-
+from parallel_pandas import ParallelPandas
 import pandas as pd
 import numpy as np
 import warnings
@@ -47,57 +47,51 @@ def InfoGain(data,split_attribute_name,target_name):
     #Calculate the information gain
     Information_Gain = total_entropy - Weighted_Entropy
     
-    return Information_Gain.round(3)
+    return Information_Gain.round(5)
 #%%
 
-def vexctorizeTokenWithInformationGian(data,flakyStatus,IG_result):
+def tokenHelper(col, matrix_with_FlakyStatus):
+    if str(col.name) != 'flaky':
+        IG = InfoGain(matrix_with_FlakyStatus, col.name, 'flaky')
+        return [col.name, "token", IG]
+
+def vexctorizeTokenWithInformationGian(data,flakyStatus,IG_result_columns):
     
     vocabualry_vectorizer = CountVectorizer()
     train = vocabualry_vectorizer.fit_transform(data)
-    matrix_token = pd.DataFrame(train.toarray(), columns = vocabualry_vectorizer.get_feature_names())
+    matrix_token = pd.DataFrame(train.toarray(), columns = vocabualry_vectorizer.get_feature_names_out()).astype('int8')
     matrix_with_FlakyStatus = pd.concat([matrix_token, flakyStatus.reindex(matrix_token.index)], axis=1)
-    
+
     # reduce the number of token in IG computation ..     
-    matrix_with_FlakyStatus.drop([col for col, val in matrix_with_FlakyStatus.sum().iteritems() if val < 2], axis=1, inplace=True)
+    matrix_with_FlakyStatus.drop([col for col, val in matrix_with_FlakyStatus[matrix_with_FlakyStatus.columns.difference(['flaky'])].sum().items() if val < 2], axis=1, inplace=True)
     
     print ("--- > start calculating the information gain for each token ")
-    counter = 0
-    for col in matrix_with_FlakyStatus.columns:
-        counter = counter + 1            
-        if str(col) != 'flakyStatus':
-            if (counter % 10 == 0):
-                processed_token = (counter/len(matrix_with_FlakyStatus.columns))*100
-                sys.stdout.write('\r')
-                sys.stdout.write(f" --> {int(processed_token)}  {'% of the tokens have been processed'} ")
-                sys.stdout.write('\r')
-            IG = InfoGain(matrix_with_FlakyStatus,col,'flakyStatus')          
-            IG_result = IG_result.append(pd.Series([col,"token",IG], index=IG_result.columns ), ignore_index=True)        
-    print (":: Done from calculating the IG per token          ")       
-    return IG_result
+    results = matrix_with_FlakyStatus.p_apply(tokenHelper, axis=0, args=(matrix_with_FlakyStatus,))
+
+    print (":: Done from calculating the IG per token          ")
+
+    results = results.T
+    results.columns = IG_result_columns
+    results.drop('flaky', axis=0, inplace=True)
+    return results
     
     
 #%%
 
-def calculateOtherFeaturesIG(data,unwantedColumns,processedData,IG_result):
-    new_data = data.copy()
-    counter = 0
-    print ("--- > start calculating the information gain for FlakeFlagger and Java keywords features  ")
-    for col in new_data:
-        if col not in unwantedColumns:
-            IG = InfoGain(new_data,col,'flakyStatus')
-            counter = counter + 1
-            if (counter % 5 == 0):
-                sys.stdout.write('\r')
-                sys.stdout.write(f" --> {int(counter)}  {'features have been processed ... '}")
-                sys.stdout.write('\r')
+def otherHelper(col, matrix_with_FlakyStatus, unwantedColumns, processedData):
+    if col.name not in unwantedColumns:
+        IG = InfoGain(matrix_with_FlakyStatus, col.name, 'flaky')
+        if col.name not in processedData: return [col.name, "JavaKeyWords", IG]
+        else: return [col.name, "FlakeFlagger", IG]
 
-                #print (str(counter) + " features have been processed ... ")
-            if(col not in processedData):
-                IG_result = IG_result.append(pd.Series([col,"JavaKeyWords",IG], index=IG_result.columns ), ignore_index=True)
-            else:
-                IG_result = IG_result.append(pd.Series([col,"FlakeFlagger",IG], index=IG_result.columns ), ignore_index=True)
+def calculateOtherFeaturesIG(data,unwantedColumns,processedData,IG_result_columns):
+    print ("--- > start calculating the information gain for FlakeFlagger and Java keywords features  ")
+    results = data.apply(otherHelper, axis=0, args=(data, unwantedColumns, processedData))
     print (":: Done from calculating the IG for Flakeflagger and Java keywords features  ")
-    return IG_result
+    results = pd.DataFrame(np.vstack(results.drop(unwantedColumns)))
+    results.columns = IG_result_columns
+    results.drop('flaky', axis=0, inplace=True, errors='ignore')
+    return results
     
 #%%
 def calculateOnlyFlakeFlaggerIG(data,unwantedColumns,IG_result):
@@ -106,7 +100,7 @@ def calculateOnlyFlakeFlaggerIG(data,unwantedColumns,IG_result):
     print ("--- > Start calculating the information gain for FlakeFlagger features  ")
     for col in new_data:
         if col not in unwantedColumns:
-            IG = InfoGain(new_data,col,'flakyStatus')
+            IG = InfoGain(new_data,col,'flaky')
             counter = counter + 1
             total_counter = round((counter/len(new_data.columns))*100)
             sys.stdout.write('\r')
@@ -123,21 +117,25 @@ def calculateOnlyFlakeFlaggerIG(data,unwantedColumns,IG_result):
 execution_time = time.time()
 
 if __name__ == '__main__':
-         
-    vocabualry_and_processed_data = pd.read_csv(sys.argv[1])
-    output = sys.argv[2]
+
+    ParallelPandas.initialize(n_cpu=12)
+    vocabualry_and_processed_data = pd.read_csv("/home/ubuntu/atsfp/results_final/_generated_new/processed_data_with_vocabulary_per_test.csv")
+    output = "/home/ubuntu/atsfp/results_final/_generated_new/Information_gain_per_feature.csv"
+    #vocabualry_and_processed_data = pd.read_csv("/home/ubuntu/atsfp/FlakeFlagger/flakiness-predicter/result/processed_data_with_vocabulary_per_test.csv")
+    #output = "test.csv"
     FlakeFlagger_features = ['assertion-roulette', 'conditional-test-logic', 'eager-test', 'fire-and-forget', 'indirect-testing', 'mystery-guest', 'resource-optimism', 'test-run-war', 'testLength', 'numAsserts', 'numCoveredLines', 'ExecutionTime', 'projectSourceLinesCovered', 'projectSourceClassesCovered', 'hIndexModificationsPerCoveredLine_window5', 'hIndexModificationsPerCoveredLine_window10', 'hIndexModificationsPerCoveredLine_window25', 'hIndexModificationsPerCoveredLine_window50', 'hIndexModificationsPerCoveredLine_window75', 'hIndexModificationsPerCoveredLine_window100', 'hIndexModificationsPerCoveredLine_window500', 'hIndexModificationsPerCoveredLine_window10000', 'num_third_party_libs']
-    unwantedColumns = ['test_name', 'flakyStatus', 'tokenList', 'java_keywords','javaKeysCounter']
+    unwantedColumns = ['test_name', 'flaky', 'tokenList', 'Java_keywords', 'java_keywords', 'javaKeysCounter']
 
     IG_result_columns = ['features','type','IG']
-    IG_result = pd.DataFrame(columns = IG_result_columns)    
+
     
     #IG for tokens only ...     
-    IG_result = vexctorizeTokenWithInformationGian(vocabualry_and_processed_data['tokenList'],vocabualry_and_processed_data['flakyStatus'],IG_result)
+    IG_result_token = vexctorizeTokenWithInformationGian(vocabualry_and_processed_data['tokenList'],vocabualry_and_processed_data['flaky'],IG_result_columns)
     
     # IG for javakeywords and FlakeFlagger features...
-    IG_result = calculateOtherFeaturesIG(vocabualry_and_processed_data,unwantedColumns,FlakeFlagger_features,IG_result)
-    
-    IG_result.to_csv(output+'.csv',  index=False)
+    IG_result_java = calculateOtherFeaturesIG(vocabualry_and_processed_data,unwantedColumns,FlakeFlagger_features,IG_result_columns)
+
+    IG_result = pd.concat([IG_result_token, IG_result_java], ignore_index=True)
+    IG_result.to_csv(output,  index=False)
     
     print("The processed is completed in : (%s) seconds. " % round((time.time() - execution_time), 5))
