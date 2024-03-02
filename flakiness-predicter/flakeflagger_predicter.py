@@ -240,19 +240,17 @@ def predict_RF_crossValidation(data, k, foldType, imputer_strategy_loc, balance,
     
 
 #%%
-def get_only_specific_columns_V1(full_data,specificColumns,wanted_columns):
-    copy_fullData = full_data.copy()
+def get_only_specific_columns_V1(copy_fullData,specificColumns,wanted_columns):
     lst = []
     for i in specificColumns:
         lst.append(i)
     for j in wanted_columns:
         lst.append(j)
-    available_columns =  list(set(lst) & set(full_data.columns))
-    copy_fullData = copy_fullData[available_columns]   
+    available_columns =  list(set(lst) & set(copy_fullData.columns))
+    copy_fullData = copy_fullData[available_columns] 
     return copy_fullData
 #%%
-def get_only_specific_columns_V2(full_data,removed_specificColumns,removed_columns):
-    copy_fullData = full_data.copy()
+def get_only_specific_columns_V2(copy_fullData,removed_specificColumns,removed_columns):
     lst = []
     for i in removed_specificColumns:
         lst.append(i)
@@ -263,8 +261,7 @@ def get_only_specific_columns_V2(full_data,removed_specificColumns,removed_colum
     return copy_fullData
 
 #%%
-def get_only_specific_columns_V3(full_data,removed_columns):
-    copy_fullData = full_data.copy()
+def get_only_specific_columns_V3(copy_fullData,removed_columns):
     lst = []
     for j in removed_columns:
         lst.append(j)
@@ -327,6 +324,7 @@ execution_time = time.time()
 #command : python3 cross-all-projects-model-vocabulary.py input_data/data/full_data.csv input_data/FlakeFlaggerFeaturesTypes.csv token_by_IG/IG_vocabulary_and_FlakeFlagger_features.csv
 
 if __name__ == '__main__':
+    pd.set_option("mode.copy_on_write", True)
     warnings.simplefilter("ignore")
 
     root = "/home/ubuntu/atsfp/atsfp-23-24/data/fst_with_multiclass/"
