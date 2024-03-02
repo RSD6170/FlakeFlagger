@@ -379,7 +379,7 @@ if __name__ == '__main__':
                             loc_tree = treeSize
                             if cl != "RF":
                                 loc_tree = [0]
-                            for mintree in treeSize:
+                            for mintree in loc_tree:
                                 futures.append(executor.submit(analyse_config, k, ig, fold, bal, imp_strategy, cl, mintree, vocabulary_processed_data_full, FlakeFlaggerFeatures, output_dir, removed_columns))
     print(futures)
 
