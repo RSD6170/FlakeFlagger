@@ -146,13 +146,8 @@ def dataframe_combiner(a_df, b_df):
 
 #%%
 def predict_RF_crossValidation(data, k, foldType, imputer_strategy_loc, balance, classifier, mintree):
-
-    if "project_y" in data.columns:
-        del data["project_y"]
-    if "project" in data.columns:
-        del data["project"]
     data_target = data[['flaky']]
-    data = data.drop(['flaky', 'test_name'], axis=1)
+    data = data.drop(['flaky', 'test_name', 'project_y', 'project'], axis=1, errors='ignore')
 
 
     
@@ -361,7 +356,7 @@ if __name__ == '__main__':
     imputer_strategy = ['mean', 'most_frequent']
     ##=========================================================##
 
-    with ProcessPoolExecutor(max_workers=15) as executor:
+    with ProcessPoolExecutor(max_workers=5) as executor:
         for ig in minIGList:
             # create IG subfolder
             Path(output_dir+"IG_"+str(ig)).mkdir(parents=True, exist_ok=True)
