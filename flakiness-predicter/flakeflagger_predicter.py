@@ -212,7 +212,7 @@ def predict_RF_crossValidation(data, k, foldType, imputer_strategy_loc, balance,
     for train, test in fold.split(data, data_target):
         iterations = single_run(data, data_target, iterations, pipeline, result_dict, test, train)
 
-    result_dict = {k: v / iterations for k,v in result_dict.items() if k != 'confusion'}
+    result_dict = {k: v / iterations if k != 'confusion' else v for k,v in result_dict.items()}
     result_dict['full_report']['support'] *= iterations
     return result_dict
 
@@ -388,10 +388,8 @@ if __name__ == '__main__':
     imputer_strategy = ['mean', 'most_frequent']
     ##=========================================================##
 
-    with ProcessPoolExecutor(max_workers=5) as executor:
+    with ProcessPoolExecutor(max_workers=10) as executor:
         for ig in minIGList:
-            # create IG subfolder
-            Path(output_dir+"IG_"+str(ig)).mkdir(parents=True, exist_ok=True)
             min_IG = IG_lst[IG_lst["IG"]>=ig]
             keep_minIG = min_IG.features.unique()
             keep_minIG = [x for x in keep_minIG if str(x) != 'nan']
