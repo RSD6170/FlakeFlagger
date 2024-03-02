@@ -372,11 +372,9 @@ if __name__ == '__main__':
             keep_minIG = [x for x in keep_minIG if str(x) != 'nan']
             removed_columns = ['java_keywords','javaKeysCounter']
 
-            # shrink data now before classification for fast result ..
-            vocabulary_processed_data_full = vocabulary_processed_data.copy()
             if(ig != 0):
                 keep_columns = keep_minIG + ['flaky','test_name']
-                vocabulary_processed_data_full = vocabulary_processed_data_full[keep_columns]
+                vocabulary_processed_data_full = vocabulary_processed_data[keep_columns]
 
 
             futures = []
