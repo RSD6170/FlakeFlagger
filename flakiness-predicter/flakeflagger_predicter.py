@@ -210,29 +210,43 @@ def predict_RF_crossValidation(data, k, foldType, imputer_strategy_loc, balance,
                    }
     iterations = 0
     for train, test in fold.split(data, data_target):
-        iterations += 1
-        X_train, X_test, y_train, y_test = data.iloc[train], data.iloc[test], data_target.iloc[train], data_target.iloc[test].squeeze()
-        labels = data_target['flaky'].unique().tolist()
-        pipeline.fit(X_train, y_train)
-        y_hat = pipeline.predict(X_test)
-        y_prob = pipeline.predict_proba(X_test)
-        prob_labels = pipeline.classes_
-
-        prfs_labels = ['precision', 'recall', 'fscore', 'support']
-
-        result_dict['confusion'] = dataframe_combiner(result_dict['confusion'], pd.DataFrame(confusion_matrix(y_test, y_hat), index=labels, columns=labels))
-        result_dict['prf_none'] = dataframe_combiner(result_dict['prf_none'], pd.DataFrame.from_records(precision_recall_fscore_support(y_test, y_hat, labels=labels), index=prfs_labels, columns=labels).T)
-        result_dict['prf_micro'] = series_combiner(result_dict['prf_micro'],  pd.Series(precision_recall_fscore_support(y_test, y_hat, average='micro', labels=labels), index=prfs_labels))
-        result_dict['prf_macro'] = series_combiner(result_dict['prf_macro'],  pd.Series(precision_recall_fscore_support(y_test, y_hat, average='macro', labels=labels), index=prfs_labels))
-        result_dict['prf_weighted'] = series_combiner(result_dict['prf_weighted'],  pd.Series(precision_recall_fscore_support(y_test, y_hat, average='weighted', labels=labels), index=prfs_labels))
-        result_dict['accuracy_norm'] = series_combiner(result_dict['accuracy_norm'],  pd.Series(accuracy_score(y_test, y_hat, normalize=True), index=['accuracy_norm']))
-        result_dict['roc_auc_ovo_weighted'] = series_combiner(result_dict['roc_auc_ovo_weighted'],  pd.Series(roc_auc_score(y_true=y_test, y_score=y_prob, multi_class='ovo', average='weighted'), index=['roc_auc_ovo_weighted']))
-        result_dict['full_report'] = dataframe_combiner(result_dict['full_report'],  class_report(y_true=y_test, y_pred=y_hat, y_score=y_prob))
+        iterations = single_run(data, data_target, iterations, pipeline, result_dict, test, train)
 
     result_dict = {k: v / iterations for k,v in result_dict.items() if k != 'confusion'}
     result_dict['full_report']['support'] *= iterations
     return result_dict
-    
+
+
+def single_run(data, data_target, iterations, pipeline, result_dict, test, train):
+    X_train, X_test, y_train, y_test = data.iloc[train], data.iloc[test], data_target.iloc[train], data_target.iloc[
+        test].squeeze()
+    labels = data_target['flaky'].unique().tolist()
+    pipeline.fit(X_train, y_train)
+    y_hat = pipeline.predict(X_test)
+    y_prob = pipeline.predict_proba(X_test)
+    prob_labels = pipeline.classes_
+    prfs_labels = ['precision', 'recall', 'fscore', 'support']
+    result_dict['confusion'] = dataframe_combiner(result_dict['confusion'],
+                                                  pd.DataFrame(confusion_matrix(y_test, y_hat), index=labels,
+                                                               columns=labels))
+    result_dict['prf_none'] = dataframe_combiner(result_dict['prf_none'], pd.DataFrame.from_records(
+        precision_recall_fscore_support(y_test, y_hat, labels=labels), index=prfs_labels, columns=labels).T)
+    result_dict['prf_micro'] = series_combiner(result_dict['prf_micro'], pd.Series(
+        precision_recall_fscore_support(y_test, y_hat, average='micro', labels=labels), index=prfs_labels))
+    result_dict['prf_macro'] = series_combiner(result_dict['prf_macro'], pd.Series(
+        precision_recall_fscore_support(y_test, y_hat, average='macro', labels=labels), index=prfs_labels))
+    result_dict['prf_weighted'] = series_combiner(result_dict['prf_weighted'], pd.Series(
+        precision_recall_fscore_support(y_test, y_hat, average='weighted', labels=labels), index=prfs_labels))
+    result_dict['accuracy_norm'] = series_combiner(result_dict['accuracy_norm'],
+                                                   pd.Series(accuracy_score(y_test, y_hat, normalize=True),
+                                                             index=['accuracy_norm']))
+    result_dict['roc_auc_ovo_weighted'] = series_combiner(result_dict['roc_auc_ovo_weighted'], pd.Series(
+        roc_auc_score(y_true=y_test, y_score=y_prob, multi_class='ovo', average='weighted'),
+        index=['roc_auc_ovo_weighted']))
+    result_dict['full_report'] = dataframe_combiner(result_dict['full_report'],
+                                                    class_report(y_true=y_test, y_pred=y_hat, y_score=y_prob))
+    return iterations + 1
+
 
 #%%
 def get_only_specific_columns_V1(copy_fullData,specificColumns,wanted_columns):
@@ -288,63 +302,81 @@ def analyse_config(k, ig, fold, bal, imp_strategy, cl, mintree, vocabulary_proce
 
     subpath = f"{ig}/{fold}/{bal}/{imp_strategy}/{cl}/{mintree}/"
 
-    # get only FlakeFlagger features ..
-    only_processed_data = get_only_specific_columns_V1(vocabulary_processed_data_full,
-                                                       FlakeFlaggerFeatures.allFeatures.unique(),
-                                                       ["flaky", "test_name"])
-    export_dict(output_dir + subpath + "only_flakeflagger/",
-                predict_RF_crossValidation(only_processed_data, k, fold, imp_strategy, bal, cl, mintree))
-    print("--> The prediction based on the FlakeFlagger features is completed ")
+    eval_flakeflagger(FlakeFlaggerFeatures, bal, cl, fold, imp_strategy, k, mintree, output_dir, subpath,
+                      vocabulary_processed_data_full)
 
-    # get only vocabulary features ..
-    only_vocabulary_data = get_only_specific_columns_V2(vocabulary_processed_data_full,
-                                                        FlakeFlaggerFeatures.allFeatures.unique(), removed_columns)
-    export_dict(output_dir + subpath + "only_dict/",
-                predict_RF_crossValidation(only_vocabulary_data, k, fold, imp_strategy, bal, cl, mintree))
-    print("--> The prediction based on the collected vocabulary only is completed ")
+    eval_dict(FlakeFlaggerFeatures, bal, cl, fold, imp_strategy, k, mintree, output_dir, removed_columns, subpath,
+              vocabulary_processed_data_full)
 
-    # get only vocabulary features ..
-    only_vocabulary_data_withFlakeFlagger = get_only_specific_columns_V3(vocabulary_processed_data_full,
-                                                                         removed_columns)
-    export_dict(output_dir + subpath + "both/",
-                predict_RF_crossValidation(only_vocabulary_data_withFlakeFlagger, k, fold, imp_strategy, bal, cl,
-                                           mintree))
-    print("--> The prediction based on the FlakeFlagger with vocabulary features is completed ")
+    eval_both(bal, cl, fold, imp_strategy, k, mintree, output_dir, removed_columns, subpath,
+              vocabulary_processed_data_full)
 
     print("=======================================================================")
 
+
+def eval_both(bal, cl, fold, imp_strategy, k, mintree, output_dir, removed_columns, subpath,
+              vocabulary_processed_data_full):
+    # get only vocabulary features ..
+    eval = predict_RF_crossValidation(
+                    get_only_specific_columns_V3(vocabulary_processed_data_full, removed_columns),
+                    k, fold, imp_strategy, bal, cl, mintree)
+    export_dict(output_dir + subpath + "both/",
+                eval)
+    print("--> The prediction based on the FlakeFlagger with vocabulary features is completed ")
+
+
+def eval_dict(FlakeFlaggerFeatures, bal, cl, fold, imp_strategy, k, mintree, output_dir, removed_columns, subpath,
+              vocabulary_processed_data_full):
+    # get only vocabulary features ..
+    eval =predict_RF_crossValidation(
+                    get_only_specific_columns_V2(vocabulary_processed_data_full,
+                                                 FlakeFlaggerFeatures.allFeatures.unique(), removed_columns),
+                    k, fold, imp_strategy, bal, cl, mintree)
+    export_dict(output_dir + subpath + "only_dict/",
+                eval)
+    print("--> The prediction based on the collected vocabulary only is completed ")
+
+
+def eval_flakeflagger(FlakeFlaggerFeatures, bal, cl, fold, imp_strategy, k, mintree, output_dir, subpath,
+                      vocabulary_processed_data_full):
+    # get only FlakeFlagger features ..
+    eval = predict_RF_crossValidation(
+                    get_only_specific_columns_V1(vocabulary_processed_data_full,
+                                                 FlakeFlaggerFeatures.allFeatures.unique(), ["flaky", "test_name"]),
+                    k, fold, imp_strategy, bal, cl, mintree)
+    export_dict(output_dir + subpath + "only_flakeflagger/",
+                eval)
+    print("--> The prediction based on the FlakeFlagger features is completed ")
+
+def generate_vocab_processed_data(path):
+    main_data = pd.read_csv(path)
+    tokenOnly = vexctorizeToken(main_data['tokenList'])
+    main_data = main_data.drop(columns=['tokenList'])
+    return pd.concat([main_data, tokenOnly.reindex(main_data.index)], axis=1)
 
 #%%   
 execution_time = time.time()
 #command : python3 cross-all-projects-model-vocabulary.py input_data/data/full_data.csv input_data/FlakeFlaggerFeaturesTypes.csv token_by_IG/IG_vocabulary_and_FlakeFlagger_features.csv
 
 if __name__ == '__main__':
-    pd.set_option("mode.copy_on_write", True)
+    #pd.set_option("mode.copy_on_write", True)
     warnings.simplefilter("ignore")
 
     root = "/home/ubuntu/atsfp/atsfp-23-24/data/fst_with_multiclass/"
 
-    # vocabulary data _ processed data
-    main_data = pd.read_csv(root + "processed_data_with_vocabulary_per_test.csv")
-    
-    # name of FlakeFlaggerFeatures .. 
-    FlakeFlaggerFeatures = pd.read_csv("/home/ubuntu/atsfp/FlakeFlagger/flakiness-predicter/input_data/FlakeFlaggerFeaturesTypes.csv")
-    
+    # name of FlakeFlaggerFeatures ..
+    FlakeFlaggerFeatures = pd.read_csv(
+        "/home/ubuntu/atsfp/FlakeFlagger/flakiness-predicter/input_data/FlakeFlaggerFeaturesTypes.csv")
+
     # IG per token/FlakeFlagger/JavaKeyWords
     IG_lst = pd.read_csv(root + "Information_gain_per_feature.csv")
-    
-    #original_processed_data
-    processed_data = pd.read_csv(root + "your_processed_data.csv")
-    
-    output_dir = root + "/classification_result/"
-    Path(output_dir).mkdir(parents=True, exist_ok=True)    
 
-    df_columns = ["Model","cross_validation","balance_type", "imputer_strategy","numTrees","features_structure","IG_min","num_satsifiedFeatures","classifier","TP","FN","FP","TN","precision","recall","F1_score","AUC"]
-        
-    tokenOnly = vexctorizeToken(main_data['tokenList'])
-    main_data = main_data.drop(columns=['tokenList'])
-    vocabulary_processed_data = pd.concat([main_data, tokenOnly.reindex(main_data.index)], axis=1)
-    
+    output_dir = root + "/classification_result/"
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    # vocabulary data _ processed data
+    vocabulary_processed_data = generate_vocab_processed_data(root + "processed_data_with_vocabulary_per_test.csv")
+
     ##=========================================================##
     # arguments
     k = 10 # number of folds
@@ -352,7 +384,7 @@ if __name__ == '__main__':
     balance = ["SMOTE", "undersampling", "both"]
     classifier = ["RF", "DT", "MLP", "SVM", "Ada", "NB", "KNN"]
     treeSize = [100, 250, 1000]
-    minIGList = [0, 0.01, 0.1]
+    minIGList = [0.01, 0.1]
     imputer_strategy = ['mean', 'most_frequent']
     ##=========================================================##
 
@@ -363,7 +395,7 @@ if __name__ == '__main__':
             min_IG = IG_lst[IG_lst["IG"]>=ig]
             keep_minIG = min_IG.features.unique()
             keep_minIG = [x for x in keep_minIG if str(x) != 'nan']
-            removed_columns = ['java_keywords','javaKeysCounter']
+            removed_columns = ['java_keywords','javaKeysCounter', 'Java_keywords']
 
             vocabulary_processed_data_full = vocabulary_processed_data
             if(ig != 0):
