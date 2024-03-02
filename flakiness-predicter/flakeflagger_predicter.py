@@ -1,6 +1,8 @@
 
 import io 
 import time
+from concurrent.futures import ProcessPoolExecutor
+
 import pandas as pd
 import warnings
 import numpy as np
@@ -8,10 +10,16 @@ import os
 import sys
 from pathlib import Path
 import ast
-from sklearn.model_selection import train_test_split
+
+import sklearn.model_selection
+from imblearn.pipeline import Pipeline
+from numpy import interp
+from sklearn.impute import SimpleImputer
+from sklearn.model_selection import train_test_split, cross_val_predict
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.metrics import classification_report, f1_score, precision_score,recall_score, confusion_matrix
+from sklearn.metrics import classification_report, f1_score, precision_score, recall_score, confusion_matrix, \
+    make_scorer, precision_recall_fscore_support, accuracy_score
 import pandas as pd
 from sklearn.model_selection import KFold, StratifiedKFold
 import warnings
@@ -20,139 +28,215 @@ from imblearn.under_sampling import RandomUnderSampler
 from sklearn.metrics import roc_curve, auc, roc_auc_score
 from sklearn import svm, tree
 import math
+
+from sklearn.preprocessing import LabelBinarizer
 from sklearn.tree import DecisionTreeClassifier
 from sklearn import svm
 from sklearn.ensemble import AdaBoostClassifier
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neural_network import MLPClassifier
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.model_selection import cross_validate
 
+
+# from https://stackoverflow.com/a/50417060
+def class_report(y_true, y_pred, y_score=None, average='micro'):
+    if y_true.shape != y_pred.shape:
+        print("Error! y_true %s is not the same shape as y_pred %s" % (
+              y_true.shape,
+              y_pred.shape)
+        )
+        return
+
+    lb = LabelBinarizer()
+
+    if len(y_true.shape) == 1:
+        lb.fit(y_true)
+
+    #Value counts of predictions
+    labels, cnt = np.unique(
+        y_pred,
+        return_counts=True)
+    n_classes = len(labels)
+    pred_cnt = pd.Series(cnt, index=labels)
+
+    metrics_summary = precision_recall_fscore_support(
+            y_true=y_true,
+            y_pred=y_pred,
+            labels=labels)
+
+    avg = list(precision_recall_fscore_support(
+            y_true=y_true,
+            y_pred=y_pred,
+            average='weighted'))
+
+    metrics_sum_index = ['precision', 'recall', 'f1-score', 'support']
+    class_report_df = pd.DataFrame(
+        list(metrics_summary),
+        index=metrics_sum_index,
+        columns=labels)
+
+    support = class_report_df.loc['support']
+    total = support.sum()
+    class_report_df['avg / total'] = avg[:-1] + [total]
+
+    class_report_df = class_report_df.T
+    class_report_df['pred'] = pred_cnt
+    class_report_df['pred'].iloc[-1] = total
+
+    if not (y_score is None):
+        fpr = dict()
+        tpr = dict()
+        roc_auc = dict()
+        for label_it, label in enumerate(labels):
+            fpr[label], tpr[label], _ = roc_curve(
+                (y_true == label).astype(int),
+                y_score[:, label_it])
+
+            roc_auc[label] = auc(fpr[label], tpr[label])
+
+        if average == 'micro':
+            if n_classes <= 2:
+                fpr["avg / total"], tpr["avg / total"], _ = roc_curve(
+                    lb.transform(y_true).ravel(),
+                    y_score[:, 1].ravel())
+            else:
+                fpr["avg / total"], tpr["avg / total"], _ = roc_curve(
+                        lb.transform(y_true).ravel(),
+                        y_score.ravel())
+
+            roc_auc["avg / total"] = auc(
+                fpr["avg / total"],
+                tpr["avg / total"])
+
+        elif average == 'macro':
+            # First aggregate all false positive rates
+            all_fpr = np.unique(np.concatenate([
+                fpr[i] for i in labels]
+            ))
+
+            # Then interpolate all ROC curves at this points
+            mean_tpr = np.zeros_like(all_fpr)
+            for i in labels:
+                mean_tpr += interp(all_fpr, fpr[i], tpr[i])
+
+            # Finally average it and compute AUC
+            mean_tpr /= n_classes
+
+            fpr["macro"] = all_fpr
+            tpr["macro"] = mean_tpr
+
+            roc_auc["avg / total"] = auc(fpr["macro"], tpr["macro"])
+
+        class_report_df['AUC'] = pd.Series(roc_auc)
+
+    return class_report_df
+
+def single_combiner(a, b):
+    if np.isnan(a): return b
+    elif np.isnan(b): return a
+    else: return a + b
+
+def series_combiner(a_series, b_series):
+    return a_series.combine(b_series, single_combiner, fill_value=np.nan)
+
+def dataframe_combiner(a_df, b_df):
+    return a_df.combine(b_df, series_combiner, fill_value=np.nan)
 
 
 #%%
-    
-def get_scores (tn,fp,fn,tp):
-    if(tp==0):
-        accuracy = (tp+tn)/(tn+fp+fn+tp)
-        Precision = 0
-        Recall = 0
-        F1 = 0    
-    else:
-        accuracy = (tp+tn)/(tn+fp+fn+tp)
-        Precision = tp/(tp+fp)
-        Recall = tp/(tp+fn)
-        F1 = 2*((Precision*Recall)/(Precision+Recall))    
-    return accuracy, F1, Precision, Recall
+def predict_RF_crossValidation(data, k, foldType, imputer_strategy_loc, balance, classifier, mintree):
 
-#%%
-    
-def generateConfusionMatrixByProject(data,processed_data):
-    
-    filter_data = data[['cross_validation', 'balance_type', 'IG_min', 'numTrees', 'classifier','features_structure']]
-    filter_data = filter_data.drop_duplicates()
-    df_columns = ['cross_validation', 'balance_type', 'IG_min', 'numTrees', 'classifier',"features_structure","project","TP","FN","FP","TN","Precision","Recall","F1"]    
-    result = pd.DataFrame(columns = df_columns)
-    
-    # add project name to the full result .. 
-    data_with_project_name = processed_data[['project','test_name']]
-    updated_data = pd.merge(data,data_with_project_name,on='test_name',how='left')
-
-    
-    for index, row in filter_data.iterrows():
-        data_per_result = updated_data[(updated_data['cross_validation'] == row['cross_validation']) &
-                                      (updated_data['balance_type'] == row['balance_type']) &
-                                      (updated_data['IG_min'] == row['IG_min']) &
-                                      (updated_data['numTrees'] == row['numTrees']) &
-                                      (updated_data['classifier'] == row['classifier']) &
-                                      (updated_data['features_structure'] == row['features_structure']) ]
-
-        for proj in data_per_result.project.unique():
-                sepcific_project = data_per_result[data_per_result["project"] == proj]
-                TP = FN = FP = 0
-                TP = len(sepcific_project[sepcific_project["Matrix_label"] == "TP"])
-                FN = len(sepcific_project[sepcific_project["Matrix_label"] == "FN"])
-                FP = len(sepcific_project[sepcific_project["Matrix_label"] == "FP"])
-                TN = len(processed_data[processed_data["project"] == proj]) - (TP+FN+FP)
-                accuracy, F1, Precision, Recall = get_scores(TN,FP,FN,TP)
-                result = result.append(pd.Series([row['cross_validation'],row['balance_type'],row['IG_min'],row['numTrees'],row['classifier'],row['features_structure'],proj,TP, FN, FP, TN,str(round(((Precision)*100)))+"%", str(round(((Recall)*100)))+"%",str(round(((F1)*100)))+"%"], index=result.columns ), ignore_index=True)
-
-    return result
-
-
-#%%
-def predict_RF_crossValidation(data,k,foldType,balance,classifier,mintree,Features_type,ig,result_by_test_name):
-
-    data = data.dropna()
     if "project_y" in data.columns:
         del data["project_y"]
     if "project" in data.columns:
         del data["project"]
-    data_target = data[['flakyStatus']]
-    data = data.drop(['flakyStatus'], axis=1)
-    
+    data_target = data[['flaky']]
+    data = data.drop(['flaky', 'test_name'], axis=1)
+
+
     
     # KFold Cross Validation approaches
     if (foldType == "KFold"):
-        fold = KFold(n_splits=k,shuffle=True)
+        fold = KFold(n_splits=k)
     else:
-        fold = StratifiedKFold(n_splits=k,shuffle=True)
-    
-    auc_scores = []
-    TN = FP = FN = TP = 0
-    for train_index, test_index in fold.split(data,data_target):
-        x_train, x_test = data.iloc[list(train_index)], data.iloc[list(test_index)]
-        y_train, y_test = data_target.iloc[list(train_index)], data_target.iloc[list(test_index)]
-        
-        test_names_as_list = x_test['test_name'].tolist()
-        x_train = x_train.drop(columns='test_name')
-        x_test = x_test.drop(columns='test_name')
-        
-        if(balance == "SMOTE"):
-            oversample = SMOTE()
-            x_train, y_train = oversample.fit_resample(x_train, y_train)
-        elif(balance == "undersampling"):
-            undersampling = RandomUnderSampler()
-            x_train, y_train = undersampling.fit_resample(x_train, y_train)
-        
-        if (classifier == 'DT'):
-            model = DecisionTreeClassifier(criterion='entropy', max_depth = None)
-        elif (classifier == 'RF'):
-             model = RandomForestClassifier(criterion = "entropy",n_estimators=mintree)
-        elif (classifier == 'MLP'):
-            model = MLPClassifier(hidden_layer_sizes=(13,13,13),max_iter=50)        
-        elif (classifier == 'SVM'):
-            model = svm.SVC(gamma='scale')       
-        elif (classifier == 'Ada'):
-            model = AdaBoostClassifier(n_estimators=100, random_state=0) 
-        elif (classifier == 'NB'):
-            model = GaussianNB() 
-        elif (classifier == 'KNN'):
-            model = KNeighborsClassifier(n_neighbors=7)
+        fold = StratifiedKFold(n_splits=k)
 
-        final_model = model.fit(x_train, y_train)
-        preds = final_model.predict(x_test)
-        
-        actual_status = y_test['flakyStatus'].tolist()
-        for i in range (0,len(test_names_as_list)):
-            if (actual_status[i] == 1 and  preds[i]== 1):
-                result_by_test_name = result_by_test_name.append(pd.Series([foldType,balance,ig,mintree,classifier,Features_type,test_names_as_list[i],"TP"], index=result_by_test_name.columns ), ignore_index=True)
-            elif (actual_status[i] == 1 and  preds[i]== 0):
-                result_by_test_name = result_by_test_name.append(pd.Series([foldType,balance,ig,mintree,classifier,Features_type,test_names_as_list[i],"FN"], index=result_by_test_name.columns ), ignore_index=True)
-            elif (actual_status[i] == 0 and  preds[i]== 1):
-                result_by_test_name = result_by_test_name.append(pd.Series([foldType,balance,ig,mintree,classifier,Features_type,test_names_as_list[i],"FP"], index=result_by_test_name.columns ), ignore_index=True)
-        
-        tn, fp, fn, tp = confusion_matrix(y_test, preds, labels=[0,1]).ravel()
-        TN = TN + tn
-        FP = FP + fp
-        FN = FN + fn
-        TP = TP + tp
-        
-        # auc computation and others .. 
-        false_positive_rate, true_positive_rate, thresholds = roc_curve(y_test, final_model.predict(x_test))
-        auc_scores.append(auc(false_positive_rate, true_positive_rate))
-    accuracy, F1, Precision, Recall = get_scores(TN,FP,FN,TP) 
-    auc_scores = [0 if math.isnan(x) else x for x in auc_scores]
-    return TN, FP, FN, TP, round((Precision*100)), round(((Recall)*100)), round((F1*100)), round(((sum(auc_scores)/k)*100)),result_by_test_name
+
+    pipeline_list = []
+
+    pipeline_list.append(('imputer', SimpleImputer(strategy=imputer_strategy_loc)))
+
+
+    if (balance == "SMOTE"):
+        oversample = SMOTE()
+        pipeline_list.append(('pre_SMOTE', oversample))
+    elif (balance == "undersampling"):
+        undersampling = RandomUnderSampler()
+        pipeline_list.append(('pre_under', undersampling))
+    elif (balance == "both"):
+        oversample = SMOTE()
+        pipeline_list.append(('pre_SMOTE', oversample))
+        undersampling = RandomUnderSampler()
+        pipeline_list.append(('pre_under', undersampling))
+
+    if (classifier == 'DT'):
+        model = DecisionTreeClassifier(criterion='entropy', max_depth=None)
+        pipeline_list.append(('model_DT', model))
+    elif (classifier == 'RF'):
+        model = RandomForestClassifier(criterion="entropy", n_estimators=mintree)
+        pipeline_list.append(('model_RF', model))
+    elif (classifier == 'MLP'):
+        model = MLPClassifier(hidden_layer_sizes=(13, 13, 13), max_iter=50)
+        pipeline_list.append(('model_MLP', model))
+    elif (classifier == 'SVM'):
+        model = svm.SVC(gamma='scale')
+        pipeline_list.append(('model_SVM', model))
+    elif (classifier == 'Ada'):
+        model = AdaBoostClassifier(n_estimators=100, random_state=0)
+        pipeline_list.append(('model_Ada', model))
+    elif (classifier == 'NB'):
+        model = GaussianNB()
+        pipeline_list.append(('model_NB', model))
+    elif (classifier == 'KNN'):
+        model = KNeighborsClassifier(n_neighbors=7)
+        pipeline_list.append(('model_KNN', model))
+
+    pipeline = Pipeline(pipeline_list)
+
+    result_dict = {'confusion': pd.DataFrame(),
+                   'prf_none': pd.DataFrame(),
+                   'prf_micro':  pd.Series(),
+                   'prf_macro': pd.Series(),
+                   'prf_weighted': pd.Series(),
+                   'accuracy_norm': pd.Series(),
+                   'roc_auc_ovo_weighted': pd.Series(),
+                   'full_report': pd.DataFrame()
+                   }
+    iterations = 0
+    for train, test in fold.split(data, data_target):
+        iterations += 1
+        X_train, X_test, y_train, y_test = data.iloc[train], data.iloc[test], data_target.iloc[train], data_target.iloc[test].squeeze()
+        labels = data_target['flaky'].unique().tolist()
+        pipeline.fit(X_train, y_train)
+        y_hat = pipeline.predict(X_test)
+        y_prob = pipeline.predict_proba(X_test)
+        prob_labels = pipeline.classes_
+
+        prfs_labels = ['precision', 'recall', 'fscore', 'support']
+
+        result_dict['confusion'] = dataframe_combiner(result_dict['confusion'], pd.DataFrame(confusion_matrix(y_test, y_hat), index=labels, columns=labels))
+        result_dict['prf_none'] = dataframe_combiner(result_dict['prf_none'], pd.DataFrame.from_records(precision_recall_fscore_support(y_test, y_hat, labels=labels), index=prfs_labels, columns=labels).T)
+        result_dict['prf_micro'] = series_combiner(result_dict['prf_micro'],  pd.Series(precision_recall_fscore_support(y_test, y_hat, average='micro', labels=labels), index=prfs_labels))
+        result_dict['prf_macro'] = series_combiner(result_dict['prf_macro'],  pd.Series(precision_recall_fscore_support(y_test, y_hat, average='macro', labels=labels), index=prfs_labels))
+        result_dict['prf_weighted'] = series_combiner(result_dict['prf_weighted'],  pd.Series(precision_recall_fscore_support(y_test, y_hat, average='weighted', labels=labels), index=prfs_labels))
+        result_dict['accuracy_norm'] = series_combiner(result_dict['accuracy_norm'],  pd.Series(accuracy_score(y_test, y_hat, normalize=True), index=['accuracy_norm']))
+        result_dict['roc_auc_ovo_weighted'] = series_combiner(result_dict['roc_auc_ovo_weighted'],  pd.Series(roc_auc_score(y_true=y_test, y_score=y_prob, multi_class='ovo', average='weighted'), index=['roc_auc_ovo_weighted']))
+        result_dict['full_report'] = dataframe_combiner(result_dict['full_report'],  class_report(y_true=y_test, y_pred=y_hat, y_score=y_prob))
+
+    result_dict = {k: v / iterations for k,v in result_dict.items() if k != 'confusion'}
+    result_dict['full_report']['support'] *= iterations
+    return result_dict
     
 
 #%%
@@ -198,30 +282,71 @@ def vexctorizeToken(token):
     return matrix_token
 
 
+def export_dict(path, ret_dict):
+    Path(path).mkdir(parents=True, exist_ok=True)
+    for k,v in ret_dict.items():
+        v.to_csv(path+f"{k}.csv")
+
+
+def analyse_config(k, ig, fold, bal, imp_strategy, cl, mintree, vocabulary_processed_data_full, FlakeFlaggerFeatures, output_dir, removed_columns ):
+    # print the given variables for easy debug.
+    print("==> run selection is: (information_gain>=" + str(
+        ig) + ")+(Classifier=" + cl + ")+(Balance=" + bal + ")+(Fold type=" + fold + ")+(Minimum tress [RF only]=" + str(
+        mintree))
+
+    subpath = f"{ig}/{fold}/{bal}/{imp_strategy}/{cl}/{mintree}/"
+
+    # get only FlakeFlagger features ..
+    only_processed_data = get_only_specific_columns_V1(vocabulary_processed_data_full,
+                                                       FlakeFlaggerFeatures.allFeatures.unique(),
+                                                       ["flaky", "test_name"])
+    export_dict(output_dir + subpath + "only_flakeflagger/",
+                predict_RF_crossValidation(only_processed_data, k, fold, imp_strategy, bal, cl, mintree))
+    print("--> The prediction based on the FlakeFlagger features is completed ")
+
+    # get only vocabulary features ..
+    only_vocabulary_data = get_only_specific_columns_V2(vocabulary_processed_data_full,
+                                                        FlakeFlaggerFeatures.allFeatures.unique(), removed_columns)
+    export_dict(output_dir + subpath + "only_dict/",
+                predict_RF_crossValidation(only_vocabulary_data, k, fold, imp_strategy, bal, cl, mintree))
+    print("--> The prediction based on the collected vocabulary only is completed ")
+
+    # get only vocabulary features ..
+    only_vocabulary_data_withFlakeFlagger = get_only_specific_columns_V3(vocabulary_processed_data_full,
+                                                                         removed_columns)
+    export_dict(output_dir + subpath + "both/",
+                predict_RF_crossValidation(only_vocabulary_data_withFlakeFlagger, k, fold, imp_strategy, bal, cl,
+                                           mintree))
+    print("--> The prediction based on the FlakeFlagger with vocabulary features is completed ")
+
+    print("=======================================================================")
+
+
 #%%   
 execution_time = time.time()
 #command : python3 cross-all-projects-model-vocabulary.py input_data/data/full_data.csv input_data/FlakeFlaggerFeaturesTypes.csv token_by_IG/IG_vocabulary_and_FlakeFlagger_features.csv
 
 if __name__ == '__main__':
     warnings.simplefilter("ignore")
-    
+
+    root = "/home/ubuntu/atsfp/atsfp-23-24/data/fst_with_multiclass/"
+
     # vocabulary data _ processed data
-    main_data = pd.read_csv(sys.argv[1])  
+    main_data = pd.read_csv(root + "processed_data_with_vocabulary_per_test.csv")
     
     # name of FlakeFlaggerFeatures .. 
-    FlakeFlaggerFeatures = pd.read_csv(sys.argv[2])
+    FlakeFlaggerFeatures = pd.read_csv("/home/ubuntu/atsfp/FlakeFlagger/flakiness-predicter/input_data/FlakeFlaggerFeaturesTypes.csv")
     
     # IG per token/FlakeFlagger/JavaKeyWords
-    IG_lst = pd.read_csv(sys.argv[3])
+    IG_lst = pd.read_csv(root + "Information_gain_per_feature.csv")
     
     #original_processed_data
-    processed_data = pd.read_csv(sys.argv[4])
+    processed_data = pd.read_csv(root + "your_processed_data.csv")
     
-    output_dir = "result_1/classification_result/"
+    output_dir = root + "/classification_result/"
     Path(output_dir).mkdir(parents=True, exist_ok=True)    
 
-    result_by_test_name_columns = ["cross_validation","balance_type","IG_min","numTrees","classifier","features_structure","test_name","Matrix_label"]    
-    df_columns = ["Model","cross_validation","balance_type","numTrees","features_structure","IG_min","num_satsifiedFeatures","classifier","TP","FN","FP","TN","precision","recall","F1_score","AUC"]    
+    df_columns = ["Model","cross_validation","balance_type", "imputer_strategy","numTrees","features_structure","IG_min","num_satsifiedFeatures","classifier","TP","FN","FP","TN","precision","recall","F1_score","AUC"]
         
     tokenOnly = vexctorizeToken(main_data['tokenList'])
     main_data = main_data.drop(columns=['tokenList'])
@@ -231,61 +356,41 @@ if __name__ == '__main__':
     # arguments
     k = 10 # number of folds
     fold_type = ["StratifiedKFold"]
-    balance = ["SMOTE"]
-    classifier = ["RF"]
-    treeSize = [250]
-    minIGList = [0.01]
+    balance = ["SMOTE", "undersampling", "both"]
+    classifier = ["RF", "DT", "MLP", "SVM", "Ada", "NB", "KNN"]
+    treeSize = [100, 250, 1000]
+    minIGList = [0, 0.01, 0.1]
+    imputer_strategy = ['mean', 'most_frequent']
     ##=========================================================##
-    
-    for ig in minIGList:
-        # create IG subfolder 
-        Path(output_dir+"IG_"+str(ig)).mkdir(parents=True, exist_ok=True)
-        min_IG = IG_lst[IG_lst["IG"]>=ig]
-        keep_minIG = min_IG.features.unique()
-        keep_minIG = [x for x in keep_minIG if str(x) != 'nan']
-        removed_columns = ['java_keywords','javaKeysCounter']
-    
-        # shrink data now before classification for fast result ..
-        vocabulary_processed_data_full = vocabulary_processed_data.copy()
-        if(ig != 0):
-            keep_columns = keep_minIG + ['flakyStatus','test_name']
-            vocabulary_processed_data_full = vocabulary_processed_data_full[keep_columns]
-        
-        
-        result = pd.DataFrame(columns = df_columns)
-        result_by_test_name = pd.DataFrame(columns = result_by_test_name_columns)
-        for mintree in treeSize:
+
+    with ProcessPoolExecutor(max_workers=15) as executor:
+        for ig in minIGList:
+            # create IG subfolder
+            Path(output_dir+"IG_"+str(ig)).mkdir(parents=True, exist_ok=True)
+            min_IG = IG_lst[IG_lst["IG"]>=ig]
+            keep_minIG = min_IG.features.unique()
+            keep_minIG = [x for x in keep_minIG if str(x) != 'nan']
+            removed_columns = ['java_keywords','javaKeysCounter']
+
+            # shrink data now before classification for fast result ..
+            vocabulary_processed_data_full = vocabulary_processed_data.copy()
+            if(ig != 0):
+                keep_columns = keep_minIG + ['flaky','test_name']
+                vocabulary_processed_data_full = vocabulary_processed_data_full[keep_columns]
+
+
+            futures = []
             for fold in fold_type:
                 for bal in balance:
-                    for cl in classifier:
-                        
-                        # print the given variables for easy debug. 
-                        print ("==> run selection is: (information_gain>="+str(ig)+")+(Classifier="+cl+")+(Balance="+bal+")+(Fold type="+fold+")+(Minimum tress [RF only]="+str(mintree))
-                        
-                        # get only FlakeFlagger features ..
-                        only_processed_data = get_only_specific_columns_V1(vocabulary_processed_data_full,FlakeFlaggerFeatures.allFeatures.unique(),["flakyStatus","test_name"])   
-                        TN, FP, FN, TP, Precision, Recall, f1, auc_score,result_by_test_name  = predict_RF_crossValidation(only_processed_data,k,fold,bal,cl,mintree,"Flake-Flagger-Features",ig,result_by_test_name)
-                        result = result.append(pd.Series(["CrossAllProjects",fold,bal,mintree,"Flake-Flagger-Features",ig,only_processed_data.shape[1]-1,cl,TP, FN, FP, TN, Precision, Recall, f1,auc_score], index=result.columns ), ignore_index=True)                
-                        print ("--> The prediction based on the FlakeFlagger features is completed ")
-                        
-                        # get only vocabulary features ..
-                        only_vocabulary_data = get_only_specific_columns_V2(vocabulary_processed_data_full,FlakeFlaggerFeatures.allFeatures.unique(),removed_columns)               
-                        TN, FP, FN, TP, Precision, Recall, f1, auc_score,result_by_test_name  = predict_RF_crossValidation(only_vocabulary_data,k,fold,bal,cl,mintree,"vocabulary-Features",ig,result_by_test_name)
-                        result = result.append(pd.Series(["CrossAllProjects",fold,bal,mintree,"vocabulary-Features",ig,only_vocabulary_data.shape[1]-1,cl,TP, FN, FP, TN, Precision, Recall, f1,auc_score], index=result.columns ), ignore_index=True)                
-                        print ("--> The prediction based on the collected vocabulary only is completed ")
-                        
-                        # get only vocabulary features ..
-                        only_vocabulary_data_withFlakeFlagger = get_only_specific_columns_V3(vocabulary_processed_data_full,removed_columns)
-                        TN, FP, FN, TP, Precision, Recall, f1, auc_score,result_by_test_name  = predict_RF_crossValidation(only_vocabulary_data_withFlakeFlagger,k,fold,bal,cl,mintree,"vocabulary-with-flakeFlagger",ig,result_by_test_name)
-                        result = result.append(pd.Series(["CrossAllProjects",fold,bal,mintree,"vocabulary-with-flakeFlagger",ig,only_vocabulary_data_withFlakeFlagger.shape[1]-1,cl,TP, FN, FP, TN, Precision, Recall, f1,auc_score], index=result.columns ), ignore_index=True)                
-                        print ("--> The prediction based on the FlakeFlagger with vocabulary features is completed ")
-                        
-                        print("=======================================================================")
-        result_by_test_name.to_csv(output_dir+"IG_"+str(ig)+'/prediction_result_per_test.csv',  index=False)        
-        result.to_csv(output_dir+"IG_"+str(ig)+'/prediction_result.csv',  index=False)
-        
-        # Here we want to generate the confusion matrix by project... 
-        confusion_matrix_by_project = generateConfusionMatrixByProject(result_by_test_name,processed_data)
-        confusion_matrix_by_project.to_csv(output_dir+"IG_"+str(ig)+'/prediction_result_by_project.csv',  index=False)        
+                    for imp_strategy in imputer_strategy:
+                        for cl in classifier:
+                            loc_tree = treeSize
+                            if cl != "RF":
+                                loc_tree = [0]
+                            for mintree in treeSize:
+                                futures.append(executor.submit(analyse_config, k, ig, fold, bal, imp_strategy, cl, mintree, vocabulary_processed_data_full, FlakeFlaggerFeatures, output_dir, removed_columns))
+    print(futures)
 
 print("The processed is completed in : (%s) seconds. " % round((time.time() - execution_time), 5))
+
+
