@@ -247,7 +247,7 @@ def get_only_specific_columns_V1(copy_fullData,specificColumns,wanted_columns):
     for j in wanted_columns:
         lst.append(j)
     available_columns =  list(set(lst) & set(copy_fullData.columns))
-    copy_fullData = copy_fullData[available_columns] 
+    copy_fullData = copy_fullData[available_columns]
     return copy_fullData
 #%%
 def get_only_specific_columns_V2(copy_fullData,removed_specificColumns,removed_columns):
@@ -370,9 +370,10 @@ if __name__ == '__main__':
             keep_minIG = [x for x in keep_minIG if str(x) != 'nan']
             removed_columns = ['java_keywords','javaKeysCounter']
 
+            vocabulary_processed_data_full = vocabulary_processed_data
             if(ig != 0):
                 keep_columns = keep_minIG + ['flaky','test_name']
-                vocabulary_processed_data_full = vocabulary_processed_data[keep_columns]
+                vocabulary_processed_data_full = vocabulary_processed_data_full[keep_columns]
 
 
             futures = []
