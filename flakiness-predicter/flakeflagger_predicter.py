@@ -37,6 +37,7 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.neural_network import MLPClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.model_selection import cross_validate
+import logging
 
 
 # from https://stackoverflow.com/a/50417060
@@ -296,9 +297,7 @@ def export_dict(path, ret_dict):
 
 def analyse_config(k, ig, fold, bal, imp_strategy, cl, mintree, vocabulary_processed_data_full, FlakeFlaggerFeatures, output_dir, removed_columns ):
     # print the given variables for easy debug.
-    print("==> run selection is: (information_gain>=" + str(
-        ig) + ")+(Classifier=" + cl + ")+(Balance=" + bal + ")+(Fold type=" + fold + ")+(Minimum tress [RF only]=" + str(
-        mintree))
+    print(f"==> run selection is: (information_gain>={ig})+(Classifier={cl})+(Balance={bal})+(Imputer Strategy={imp_strategy})+(Fold type={fold})+(Minimum tress [RF only]={mintree}")
 
     subpath = f"{ig}/{fold}/{bal}/{imp_strategy}/{cl}/{mintree}/"
 
@@ -360,6 +359,10 @@ execution_time = time.time()
 
 if __name__ == '__main__':
     #pd.set_option("mode.copy_on_write", True)
+
+    logging.basicConfig(level=logging.DEBUG)
+    logger = logging.getLogger(__name__)
+
     warnings.simplefilter("ignore")
 
     root = "/home/ubuntu/atsfp/atsfp-23-24/data/fst_with_multiclass/"
@@ -388,7 +391,7 @@ if __name__ == '__main__':
     imputer_strategy = ['mean', 'most_frequent']
     ##=========================================================##
 
-    with ProcessPoolExecutor(max_workers=10) as executor:
+    with (ProcessPoolExecutor(max_workers=8) as executor):
         for ig in minIGList:
             min_IG = IG_lst[IG_lst["IG"]>=ig]
             keep_minIG = min_IG.features.unique()
@@ -401,7 +404,7 @@ if __name__ == '__main__':
                 vocabulary_processed_data_full = vocabulary_processed_data_full[keep_columns]
 
 
-            futures = []
+            futures = {}
             for fold in fold_type:
                 for bal in balance:
                     for imp_strategy in imputer_strategy:
@@ -410,8 +413,13 @@ if __name__ == '__main__':
                             if cl != "RF":
                                 loc_tree = [0]
                             for mintree in loc_tree:
-                                futures.append(executor.submit(analyse_config, k, ig, fold, bal, imp_strategy, cl, mintree, vocabulary_processed_data_full, FlakeFlaggerFeatures, output_dir, removed_columns))
-    print(futures)
+                                futures[f"Future: (information_gain>={ig})+(Classifier={cl})+(Balance={bal})+(Imputer Strategy={imp_strategy})+(Fold type={fold})+(Minimum tress [RF only]={mintree}"] = \
+                                    (executor.submit(analyse_config, k, ig, fold, bal, imp_strategy, cl, mintree, vocabulary_processed_data_full, FlakeFlaggerFeatures, output_dir, removed_columns))
+
+    for k,v in futures.items():
+        logger.debug(k)
+        logger.exception(v.exception(), exc_info=True)
+        logger.debug("-------------------------------")
 
 print("The processed is completed in : (%s) seconds. " % round((time.time() - execution_time), 5))
 
