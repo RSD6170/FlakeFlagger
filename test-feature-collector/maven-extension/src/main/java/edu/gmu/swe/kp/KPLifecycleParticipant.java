@@ -18,6 +18,7 @@ import javax.inject.Singleton;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedList;
+import java.util.List;
 
 @Named("kp-ext")
 @Singleton
@@ -48,6 +49,7 @@ public class KPLifecycleParticipant extends AbstractMavenLifecycleParticipant {
 		disabledPlugins.add("maven-javadoc-plugin");
 		disabledPlugins.add("spotless-maven-plugin");
 		disabledPlugins.add("maven-gpg-plugin");
+		disabledPlugins.add("dependency-check-maven");
 
 
 	}
@@ -87,6 +89,8 @@ public class KPLifecycleParticipant extends AbstractMavenLifecycleParticipant {
 				if ("4.2".equals(d.getVersion()) || "4.5".equals(d.getVersion()) || "4.4".equals(d.getVersion()) || "4.3".equals(d.getVersion()) || d.getVersion().startsWith("3"))
 					d.setVersion("4.6");
 			}
+			if (d.getGroupId().equals("org.projectlombok") && d.getArtifactId().equals("lombok")) d.setVersion("1.18.30");
+
 		}
 
 		//Also fix dead pluginrepos
@@ -335,6 +339,7 @@ public class KPLifecycleParticipant extends AbstractMavenLifecycleParticipant {
 			}
 			if (o.getArtifactId().equals("maven-compiler-plugin") && o.getGroupId().equals("org.apache.maven.plugins")) compPlugin = o;
 			if (o.getArtifactId().equals("bnd-maven-plugin") && o.getGroupId().equals("biz.aQute.bnd")) o.setVersion("7.0.0");
+			if (o.getArtifactId().equals("groovy-maven-plugin") && o.getGroupId().equals("org.codehaus.gmaven")) o.setVersion("2.1.1");
 		}
 		if(depPlugin == null){
 			depPlugin = new Plugin();
@@ -371,7 +376,9 @@ public class KPLifecycleParticipant extends AbstractMavenLifecycleParticipant {
 		config2.addChild(outputProperty2);
 		config2.addChild(outputProperty3);
 		ex2.setConfiguration(config2);
-		compPlugin.addExecution(ex2);
+		List<PluginExecution> executions = compPlugin.getExecutions();
+		executions.add(0, ex2);
+		compPlugin.setExecutions(executions);
 	}
 
 }
