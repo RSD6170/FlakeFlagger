@@ -1,14 +1,17 @@
 import logging
 import warnings
 from pathlib import Path
-from typing import Optional, Union, Any
+from typing import Optional, Union, Any, Dict
 
 import autosklearn.classification
 import pandas as pd
+import sklearn.metrics
 from ConfigSpace import ConfigurationSpace, UniformFloatHyperparameter, CategoricalHyperparameter
 from autosklearn.pipeline.components.base import AutoSklearnPreprocessingAlgorithm
 from autosklearn.pipeline.components.feature_preprocessing import add_preprocessor
 from autosklearn.pipeline.constants import DENSE, UNSIGNED_DATA, SIGNED_DATA
+from sklearn.metrics import classification_report
+from sklearn.model_selection import train_test_split
 
 # paths
 root = "/home/ubuntu/atsfp/atsfp-23-24/data/fst_with_multiclass/"
@@ -26,7 +29,7 @@ class IGFilter(AutoSklearnPreprocessingAlgorithm):
         self.igList = pd.read_csv(path_IGlist)
 
     @staticmethod
-    def get_hyperparameter_search_space(feat_type: Optional[dict[Union[str, int], str]] = None,
+    def get_hyperparameter_search_space(feat_type: Optional[Dict[Union[str, int], str]] = None,
                                         dataset_properties: Any = None):
         cs = ConfigurationSpace()
         barrier = UniformFloatHyperparameter(name="IGbarrier", lower=0.0, upper=1.0, default_value=0.01)
@@ -67,7 +70,7 @@ class MethodFilter(AutoSklearnPreprocessingAlgorithm):
         self.flakeFlaggerFeatures = pd.read_csv(path_featureTypes)
 
     @staticmethod
-    def get_hyperparameter_search_space(feat_type: Optional[dict[Union[str, int], str]] = None,
+    def get_hyperparameter_search_space(feat_type: Optional[Dict[Union[str, int], str]] = None,
                                         dataset_properties: Any = None):
         cs = ConfigurationSpace()
         type = CategoricalHyperparameter(name="type", choices=['ff', 'dict', 'both'], default_value='both')
@@ -132,19 +135,27 @@ if __name__ == '__main__':
     add_preprocessor(MethodFilter)
 
     automl = autosklearn.classification.AutoSklearnClassifier(
-        time_left_for_this_task=600,
+        time_left_for_this_task=36000,
         resampling_strategy="cv",
         resampling_strategy_arguments={
-                "train_size": 0.8,     # The size of the training set
-                "shuffle": True,        # Whether to shuffle before splitting data
-                "folds": 5              # Used in 'cv' based resampling strategies
-            },
+            "train_size": 0.8,  # The size of the training set
+            "shuffle": True,  # Whether to shuffle before splitting data
+            "folds": 5  # Used in 'cv' based resampling strategies
+        },
         n_jobs=1,
+        delete_tmp_folder_after_terminate=False,
+        memory_limit=9000,  # TODO change
         metric=autosklearn.metrics.f1_weighted,
     )
     data_target = vocabulary_processed_data[['flaky']]
     data = vocabulary_processed_data.drop(['flaky', 'test_name', 'project_y', 'project'], axis=1, errors='ignore')
-    automl.fit(data, data_target, dataset_name="IDoFT_Multi")
-    print(automl.leaderboard())
-    print(automl.show_models(), indent=4)
 
+    data, data_test, data_target, data_target_test = train_test_split(data, data_target, test_size=0.2, random_state=1, stratify=data_target)
+
+    automl.fit(data, data_target, dataset_name="IDoFT_Multi")
+    print(automl.sprint_statistics())
+    print(automl.leaderboard())
+    print(automl.show_models())
+
+    predictions = automl.predict(data_test)
+    print(classification_report(data_target_test, predictions))
